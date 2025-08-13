@@ -22,6 +22,7 @@ dependencies {
     implementation("software.amazon.awssdk:sdk-core:2.32.20")
     implementation("software.amazon.awssdk:sso:2.32.20")
     implementation("software.amazon.awssdk:ssooidc:2.32.20")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
     runtimeOnly("ch.qos.logback:logback-classic:1.5.18")
 }
 
