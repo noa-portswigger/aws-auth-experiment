@@ -1,5 +1,6 @@
 package net.portswigger;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -9,16 +10,11 @@ import software.amazon.awssdk.auth.signer.Aws4Signer;
 import software.amazon.awssdk.auth.signer.params.Aws4SignerParams;
 import software.amazon.awssdk.http.SdkHttpFullRequest;
 import software.amazon.awssdk.http.SdkHttpMethod;
-import software.amazon.awssdk.http.auth.aws.signer.AwsV4FamilyHttpSigner;
-import software.amazon.awssdk.http.auth.aws.signer.AwsV4HttpSigner;
-import software.amazon.awssdk.http.auth.spi.signer.SignedRequest;
-import software.amazon.awssdk.identity.spi.AwsCredentialsIdentity;
 import software.amazon.awssdk.regions.Region;
 
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -31,53 +27,33 @@ public class TokenGenerator {
      */
     public static String generateSubjectToken(String audience, Region region) {
         try {
-            if (audience == null || audience.trim().isEmpty()) {
-                throw new RuntimeException("Audience is required for AWS subject token generation");
-            }
+            String host = String.format("sts.%s.amazonaws.com", region.id());
+            String baseUrl = String.format("https://%s/", host);
 
-            // Create AWS STS GetCallerIdentity request URL
-            String baseUrl = String.format("https://sts.%s.amazonaws.com/", region.id());
-            String queryString = "Action=GetCallerIdentity&Version=2011-06-15";
-            String fullUrl = baseUrl + "?" + queryString;
-
-            // Prepare the x-goog-cloud-target-resource header
-            String targetResource = audience.replace("https://", "");
-
-            // Create the request with all required headers
-            Map<String, String> headers = new HashMap<>();
-            headers.put("Host", String.format("sts.%s.amazonaws.com", region.id()));
-            headers.put("x-goog-cloud-target-resource", targetResource);
-
-            // Build the HTTP request
-            SdkHttpFullRequest.Builder requestBuilder = SdkHttpFullRequest.builder()
+            SdkHttpFullRequest request = SdkHttpFullRequest.builder()
                     .method(SdkHttpMethod.POST)
-                    .uri(URI.create(fullUrl));
-
-            // Add headers
-            for (Map.Entry<String, String> header : headers.entrySet()) {
-                requestBuilder.putHeader(header.getKey(), header.getValue());
-            }
-
-            SdkHttpFullRequest request = requestBuilder.build();
-
-            AwsCredentials credentials = DefaultCredentialsProvider.create().resolveCredentials();
-
-
-            // For now, google requires the deprecated version.
-            // See https://github.com/googleapis/google-auth-library-java/issues/1792 for details.
-            Aws4Signer signer = Aws4Signer.create();
-            Aws4SignerParams signerParams = Aws4SignerParams.builder()
-                    .awsCredentials(credentials)
-                    .signingName("sts")
-                    .signingRegion(region)
+                    .uri(URI.create(String.format("%s?Action=GetCallerIdentity&Version=2011-06-15", baseUrl)))
+                    .putHeader("Host", host)
+                    .putHeader("x-goog-cloud-target-resource", audience.replace("https://", ""))
                     .build();
 
-            SdkHttpFullRequest signedRequest = signer.sign(request, signerParams);
 
-            return createTokenFromSignedRequest(signedRequest);
+            try (DefaultCredentialsProvider credentialsProvider = DefaultCredentialsProvider.builder().build()) {
 
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to generate subject token: " + e.getMessage(), e);
+                // For now, google requires the deprecated version.
+                // See https://github.com/googleapis/google-auth-library-java/issues/1792 for details.
+                //noinspection deprecation
+                Aws4Signer signer = Aws4Signer.create();
+                Aws4SignerParams signerParams = Aws4SignerParams.builder()
+                        .awsCredentials(credentialsProvider.resolveCredentials())
+                        .signingName("sts")
+                        .signingRegion(region)
+                        .build();
+
+                return createTokenFromSignedRequest(signer.sign(request, signerParams));
+            }
+        } catch (RuntimeException e) {
+            throw new RuntimeException("Failed to generate subject token", e);
         }
     }
 
@@ -107,8 +83,8 @@ public class TokenGenerator {
             System.out.println("JSON: " + tokenJson);
             return URLEncoder.encode(tokenJson, StandardCharsets.UTF_8);
             
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to create token from signed request: " + e.getMessage(), e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to create token from signed request", e);
         }
     }
 }
