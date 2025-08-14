@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.signer.Aws4Signer;
 import software.amazon.awssdk.auth.signer.params.Aws4SignerParams;
@@ -40,7 +39,7 @@ public class TokenGenerator {
 
             try (DefaultCredentialsProvider credentialsProvider = DefaultCredentialsProvider.builder().build()) {
 
-                // For now, google requires the deprecated version.
+                // For now, Google requires the deprecated version.
                 // See https://github.com/googleapis/google-auth-library-java/issues/1792 for details.
                 //noinspection deprecation
                 Aws4Signer signer = Aws4Signer.create();
@@ -61,11 +60,10 @@ public class TokenGenerator {
         try {
             ObjectMapper objectMapper = new ObjectMapper();
             
-            // Create headers array in the required format for GCP
             ArrayNode headersArray = objectMapper.createArrayNode();
             for (Map.Entry<String, List<String>> header : signedRequest.headers().entrySet()) {
                 // AWS SDK may have multiple values for a header, we take the first one
-                String value = header.getValue().isEmpty() ? "" : header.getValue().get(0);
+                String value = header.getValue().isEmpty() ? "" : header.getValue().getFirst();
                 ObjectNode headerObj = objectMapper.createObjectNode();
                 headerObj.put("key", header.getKey().toLowerCase());
                 headerObj.put("value", value);
