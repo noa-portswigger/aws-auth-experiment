@@ -19,7 +19,7 @@ import java.util.concurrent.Callable;
 public class Client implements Callable<Integer> {
     private static final Logger logger = LoggerFactory.getLogger(Client.class);
     
-    // This references noa's personal gcp project with configured identity pool and provider. 
+    // This references noa's personal gcp project with a configured identity pool and provider.
     // Useful for verifying that GCP can use our token
     private static final String GCP_AUDIENCE = "//iam.googleapis.com/projects/252090236040/locations/global/workloadIdentityPools/nnoare/providers/nnoare";
     private static final Region STS_REGION = Region.EU_WEST_1;
@@ -39,7 +39,7 @@ public class Client implements Callable<Integer> {
     }
     
     @Override
-    public Integer call() throws Exception {
+    public Integer call() {
         URI uri = URI.create(url);
         
         try (HttpClient client = new HttpClient()) {
@@ -50,7 +50,7 @@ public class Client implements Callable<Integer> {
             // Add AWS federated identity authorization header if requested
             if (addAuth) {
                 try {
-                    String authHeader = makeAuthorization(gcpCompatibleAudience ? GCP_AUDIENCE : makeAudience(url));
+                    String authHeader = makeAuthorization(gcpCompatibleAudience ? GCP_AUDIENCE : makeAudience(uri));
                     request.headers(hs -> hs.add("Authorization", authHeader));
                     logger.info("Added AWS federated identity authorization header");
                 } catch (Exception e) {
@@ -59,18 +59,17 @@ public class Client implements Callable<Integer> {
                 }
             }
 
-            logger.info("Request headers:");
+            logger.debug("Request headers:");
             request.getHeaders().forEach(field ->
-                logger.info("  {}: {}", field.getName(), field.getValue()));
+                logger.debug("  {}: {}", field.getName(), field.getValue()));
 
             ContentResponse response = request.send();
             
-            System.out.println("Status: " + response.getStatus());
-            System.out.println("Headers:");
+            logger.info("Status: {}", response.getStatus());
+            logger.debug("Response headers:");
             response.getHeaders().forEach((field) -> 
-                System.out.println(field.getName() + ": " + field.getValue()));
-            System.out.println();
-            System.out.println(response.getContentAsString());
+                logger.debug("{}: {}", field.getName(), field.getValue()));
+            logger.info("Response body:\n{}", response.getContentAsString());
             
             return 0;
             
@@ -80,18 +79,16 @@ public class Client implements Callable<Integer> {
         }
     }
     
-    private String makeAudience(String url) {
-        URI uri = URI.create(url);
+    private String makeAudience(URI uri) {
         String host = uri.getHost();
         int port = uri.getPort();
         if (port == -1) {
-            // Use default port based on scheme
             port = "https".equals(uri.getScheme()) ? 443 : 80;
         }
         return host + ":" + port;
     }
     
-    private String makeAuthorization(String audience) throws Exception {
+    private String makeAuthorization(String audience) {
         String subjectToken = TokenGenerator.generateSubjectToken(audience, STS_REGION);
         return "aws-fed-id " + subjectToken;
     }
