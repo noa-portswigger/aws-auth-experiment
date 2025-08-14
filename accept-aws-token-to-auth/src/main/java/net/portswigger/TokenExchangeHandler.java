@@ -34,53 +34,29 @@ public class TokenExchangeHandler extends org.eclipse.jetty.server.Handler.Abstr
     
     @Override
     public boolean handle(Request request, Response response, Callback callback) throws Exception {
-        String authHeader = request.getHeaders().get("Authorization");
-        
-        if (authHeader != null && authHeader.startsWith("aws-fed-id ")) {
-            return handleAwsTokenAuth(request, response, callback, authHeader);
-        } else {
-            return handleDefaultResponse(request, response, callback, authHeader);
-        }
-    }
-    
-    private boolean handleAwsTokenAuth(Request request, Response response, Callback callback, String authHeader) throws Exception {
-        String token = authHeader.substring("aws-fed-id ".length()).trim();
-        logger.info("Found aws-fed-id authorization header with token");
-        
         try {
-            String gcpResponse = exchangeTokenForGcpCredentials(token);
-            
+            String authHeader = request.getHeaders().get("Authorization");
+            var validAuthToken = false;
+            if (authHeader != null && authHeader.startsWith("aws-fed-id ")) {
+                exchangeTokenForGcpCredentials(authHeader.substring("aws-fed-id ".length()).trim());
+                validAuthToken = true;
+            }
+
             response.setStatus(200);
-            response.getHeaders().put("Content-Type", "application/json; charset=utf-8");
-            response.write(true, java.nio.ByteBuffer.wrap(gcpResponse.getBytes()), callback);
-            
-            logger.info("Successfully exchanged token for GCP credentials");
+            response.getHeaders().put("Content-Type", "text/html; charset=utf-8");
+            response.write(true, java.nio.ByteBuffer.wrap(generateHtmlPage(validAuthToken).getBytes()), callback);
             return true;
         } catch (Exception e) {
-            return handleErrorResponse(response, callback, e);
+            callback.failed(e);
+            return true;
         }
     }
-    
-    private boolean handleDefaultResponse(Request request, Response response, Callback callback, String authHeader) throws Exception {
-        response.setStatus(200);
-        response.getHeaders().put("Content-Type", "text/html; charset=utf-8");
-        
-        String html = generateInfoPage(request, authHeader);
-        response.write(true, java.nio.ByteBuffer.wrap(html.getBytes()), callback);
-        return true;
-    }
-    
-    private boolean handleErrorResponse(Response response, Callback callback, Exception e) throws Exception {
-        logger.error("Failed to exchange token for GCP credentials", e);
-        
-        response.setStatus(500);
-        response.getHeaders().put("Content-Type", "application/json; charset=utf-8");
-        String errorResponse = "{\"error\":\"Failed to exchange token: " + e.getMessage() + "\"}";
-        response.write(true, java.nio.ByteBuffer.wrap(errorResponse.getBytes()), callback);
-        return true;
-    }
-    
-    private String generateInfoPage(Request request, String authHeader) {
+
+    private String generateHtmlPage(boolean validAuthToken) {
+        String message = validAuthToken 
+            ? "The request contained a valid AWS authentication token according to google"
+            : "There was no authentication token";
+            
         return """
             <!DOCTYPE html>
             <html>
@@ -89,16 +65,13 @@ public class TokenExchangeHandler extends org.eclipse.jetty.server.Handler.Abstr
             </head>
             <body>
                 <h1>AWS Token to GCP Auth Server</h1>
-                <p>Send a request with Authorization header: aws-fed-id &lt;token&gt;</p>
-                <p>Request URI: %s</p>
-                <p>Method: %s</p>
-                <p>Authorization Header: %s</p>
+                <p>%s</p>
             </body>
             </html>
-            """.formatted(request.getHttpURI().getPath(), request.getMethod(), authHeader != null ? authHeader : "None");
+            """.formatted(message);
     }
     
-    private String exchangeTokenForGcpCredentials(String subjectToken) throws Exception {
+    private void exchangeTokenForGcpCredentials(String subjectToken) throws Exception {
         String formData = "audience=" + URLEncoder.encode(AUDIENCE, StandardCharsets.UTF_8) +
                 "&grant_type=" + URLEncoder.encode("urn:ietf:params:oauth:grant-type:token-exchange", StandardCharsets.UTF_8) +
                 "&requested_token_type=" + URLEncoder.encode("urn:ietf:params:oauth:token-type:access_token", StandardCharsets.UTF_8) +
@@ -115,7 +88,5 @@ public class TokenExchangeHandler extends org.eclipse.jetty.server.Handler.Abstr
         if (response.getStatus() != 200) {
             throw new RuntimeException("GCP STS API returned status " + response.getStatus() + ": " + response.getContentAsString());
         }
-        
-        return response.getContentAsString();
     }
 }
