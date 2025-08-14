@@ -7,8 +7,6 @@ import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.ContentResponse;
 import org.eclipse.jetty.client.StringRequestContent;
 import org.eclipse.jetty.http.HttpMethod;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
@@ -18,17 +16,18 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
 public class Handler extends org.eclipse.jetty.server.Handler.Abstract implements AutoCloseable {
-    private static final Logger logger = LoggerFactory.getLogger(Handler.class);
     private static final String GCP_STS_URL = "https://sts.googleapis.com/v1/token";
     private static final String AUDIENCE = "//iam.googleapis.com/projects/252090236040/locations/global/workloadIdentityPools/nnoare/providers/nnoare";
     
     private final HttpClient httpClient;
     private final boolean checkTokenAgainstGcp;
+    private final String expectedAudience;
     
-    public Handler(boolean checkTokenAgainstGcp) throws Exception {
+    public Handler(boolean checkTokenAgainstGcp, String expectedAudience) throws Exception {
         this.httpClient = new HttpClient();
         this.httpClient.start();
         this.checkTokenAgainstGcp = checkTokenAgainstGcp;
+        this.expectedAudience = expectedAudience;
     }
     
     @Override
@@ -39,7 +38,7 @@ public class Handler extends org.eclipse.jetty.server.Handler.Abstract implement
     }
     
     @Override
-    public boolean handle(Request request, Response response, Callback callback) throws Exception {
+    public boolean handle(Request request, Response response, Callback callback) {
         try {
             String authHeader = request.getHeaders().get("Authorization");
             String validationResult = null;
@@ -115,6 +114,26 @@ public class Handler extends org.eclipse.jetty.server.Handler.Abstract implement
         // Parse the JSON token
         ObjectMapper objectMapper = new ObjectMapper();
         JsonNode tokenData = objectMapper.readTree(decodedToken);
+        
+        // Validate audience in AWS mode
+        if (expectedAudience != null) {
+            String tokenAudience = null;
+            for (JsonNode header : tokenData.get("headers")) {
+                String key = header.get("key").asText();
+                if ("x-goog-cloud-target-resource".equals(key)) {
+                    tokenAudience = header.get("value").asText();
+                    break;
+                }
+            }
+            
+            if (tokenAudience == null) {
+                throw new RuntimeException("Token does not contain required x-goog-cloud-target-resource header");
+            }
+            
+            if (!expectedAudience.equals(tokenAudience)) {
+                throw new RuntimeException("Token audience mismatch: expected '" + expectedAudience + "', but token contains '" + tokenAudience + "'");
+            }
+        }
 
         // Create the request to AWS STS
         org.eclipse.jetty.client.Request request = this.httpClient.newRequest(tokenData.get("url").asText())
@@ -142,13 +161,13 @@ public class Handler extends org.eclipse.jetty.server.Handler.Abstract implement
         try {
             XmlMapper xmlMapper = new XmlMapper();
             JsonNode rootNode = xmlMapper.readTree(xmlResponse);
-            
+
             // Look for ARN specifically under GetCallerIdentityResult
             JsonNode getCallerIdentityResult = rootNode.path("GetCallerIdentityResult");
             if (getCallerIdentityResult.isMissingNode()) {
                 throw new RuntimeException("GetCallerIdentityResult not found in AWS STS response");
             }
-            
+
             JsonNode arnNode = getCallerIdentityResult.path("Arn");
             if (arnNode.isMissingNode()) {
                 throw new RuntimeException("Arn not found under GetCallerIdentityResult in AWS STS response");
